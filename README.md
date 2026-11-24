@@ -7,12 +7,14 @@ an API. This repository is deliberately separate from the RelayOps web app:
 the model pipeline is a portfolio-grade, independently deployable artifact,
 and integration is API-only (Milestone 3).
 
-**Status: Milestone 2 complete** — M1 (data pipeline, baseline RUL model,
-honest published evaluation) plus anomaly detection, a composite health
+**Status: Milestone 3 complete** — M1 (data pipeline, baseline RUL model,
+honest published evaluation), M2 (anomaly detection, a composite health
 index, a costed alert-threshold decision, and a generalization run on the
-harder FD002 subset. FastAPI serving and RelayOps integration (M3), a
-live sensor simulator with drift monitoring (M4), and the full case
-study (M5) follow.
+harder FD002 subset), and M3: the FastAPI scoring service below, serving
+the trained M1+M2 components from a checksummed artifact bundle. The
+RelayOps-side integration (predictions table, worker route, UI) is a
+separate change with its own checkpoint; a live sensor simulator with
+drift monitoring (M4) and the full case study (M5) follow.
 
 ## Problem
 
@@ -294,6 +296,146 @@ What the numbers say, plainly:
   official protocol. Named next experiments, not claims: per-condition
   models, and condition identity as an explicit model feature.
 
+## Milestone 3 — the scoring service
+
+A FastAPI app (`api/`) serves the trained M1 RUL model and M2 anomaly /
+health components over HTTP. It is a thin, strict shell around the
+offline pipeline: the same trailing-feature builder, the same health
+formula, the same reference distribution — so a score served for a
+window is the value the offline pipeline computes for that engine at
+that cycle.
+
+### Artifacts
+
+One command trains everything the service needs, deterministically
+(seed 42, ~13 s on a laptop CPU):
+
+```bash
+.venv/bin/python scripts/train_service.py   # writes models/
+```
+
+`models/` (gitignored) then holds `rul_model.joblib` (M1 model refit on
+all 100 engines), `anomaly_detector.joblib` (M2 detector, healthy-life
+reference), `reference_scores.npy` (the healthy reference scores that
+anomaly percentiles are computed against), and `model_card.json` — the
+bundle's self-description: feature column list, training-data summary,
+this artifact's own official-protocol metrics (test RMSE **19.61**,
+NASA score **966.7** — identical to M1's recorded run, and the training
+script asserts that), the alert operating point with its M2 provenance,
+component versions and hyperparameters, and a SHA-256 of every artifact
+file plus a bundle checksum over them.
+
+At startup the service validates the bundle before serving anything:
+missing files, a checksum mismatch, or a feature list that disagrees
+with what the current code builds from the card's own configuration all
+fail startup with a specific error. Checksums are verified *before* any
+pickle is loaded.
+
+### Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /healthz` | Liveness: `status`, `model_version`, `artifact_checksum` (the bundle checksum), `feature_count` |
+| `POST /score` | Score one asset: body `{asset_id, cycles: [{cycle, settings[3], sensors[21]}, …]}`, oldest first |
+| `POST /score/batch` | `{assets: […]}` — same items as `/score`; returns one entry per asset, score or `{asset_id, error}` — one bad asset never sinks the batch |
+
+`POST /score` response fields: `asset_id`, `predicted_rul` (cycles),
+`health_index` (0–100), `anomaly_score`, `anomaly_percentile` (vs the
+healthy reference), `alert_level`, `model_version`, `scored_at` (UTC).
+
+Scoring rules, all enforced as readable 422s — inputs are rejected,
+never silently repaired or clipped:
+
+- **Minimum history: 11 cycles.** The first 10 cycles of any window are
+  rolling-feature warm-up (the M2 finding above); a shorter window gets
+  `422 "insufficient history: …"` instead of a garbage score.
+- Exactly 3 settings and 21 finite numbers per cycle; cycle numbers
+  strictly increasing. The `cycle` values must be the asset's true
+  cycle counter — the model uses the last one as engine age.
+- Only the window's **last** cycle is scored; its trailing features
+  depend only on the window's last 10 cycles, so the window fully
+  determines the score. Note the shipped bundle is trained on all 100
+  FD001 training engines, while the M1/M2 offline records came from
+  the 80-engine evaluation split — so live values differ slightly
+  from the offline records (see the example below).
+
+### Alert levels
+
+| Level | Rule | Status |
+|---|---|---|
+| `critical` | health ≤ 50 | **the evaluated M2 decision** (validation-chosen, 50:1 cost model; test precision 0.165 / recall 0.994) |
+| `watch` | 50 < health ≤ 70 | presentation tier only — not part of the M2 evaluation |
+| `none` | health > 70 | — |
+
+### Example
+
+Request — the last 11 cycles (the minimum scoreable window) of FD001
+test engine 41, the M1/M2 dangerous-overestimate case (true RUL at
+cycle 123 is 18):
+
+```bash
+curl -X POST localhost:8000/score -H 'Content-Type: application/json' -d '{
+  "asset_id": "fd001-test-engine-41",
+  "cycles": [
+    {"cycle": 113, "settings": [0.003, 0.0004, 100.0], "sensors": [518.67, 642.49, 1587.8, 1413.4, 14.62, 21.61, 552.47, 2388.2, 9034.57, 1.3, 47.79, 520.76, 2388.2, 8118.57, 8.4538, 0.03, 394.0, 2388.0, 100.0, 38.71, 23.3149]},
+    {"cycle": 114, "settings": [0.0039, -0.0004, 100.0], "sensors": [518.67, 642.57, 1597.93, 1408.81, 14.62, 21.61, 552.9, 2388.17, 9037.99, 1.3, 47.62, 521.57, 2388.19, 8117.92, 8.478, 0.03, 393.0, 2388.0, 100.0, 38.91, 23.3213]},
+    {"cycle": 115, "settings": [-0.0005, -0.0005, 100.0], "sensors": [518.67, 642.68, 1596.46, 1417.7, 14.62, 21.61, 552.92, 2388.2, 9039.67, 1.3, 47.6, 520.94, 2388.17, 8116.58, 8.468, 0.03, 392.0, 2388.0, 100.0, 38.81, 23.2519]},
+    {"cycle": 116, "settings": [-0.0, -0.0003, 100.0], "sensors": [518.67, 642.27, 1594.31, 1412.27, 14.62, 21.61, 553.6, 2388.13, 9043.12, 1.3, 47.71, 521.28, 2388.17, 8117.13, 8.4405, 0.03, 395.0, 2388.0, 100.0, 38.61, 23.3168]},
+    {"cycle": 117, "settings": [0.0012, -0.0001, 100.0], "sensors": [518.67, 642.56, 1590.59, 1421.07, 14.62, 21.61, 552.85, 2388.19, 9034.9, 1.3, 47.71, 521.08, 2388.18, 8120.18, 8.4485, 0.03, 393.0, 2388.0, 100.0, 38.8, 23.2356]},
+    {"cycle": 118, "settings": [0.0026, 0.0003, 100.0], "sensors": [518.67, 643.14, 1587.79, 1410.9, 14.62, 21.61, 552.33, 2388.17, 9037.49, 1.3, 47.6, 521.37, 2388.17, 8114.77, 8.4545, 0.03, 394.0, 2388.0, 100.0, 38.71, 23.1792]},
+    {"cycle": 119, "settings": [-0.001, -0.0005, 100.0], "sensors": [518.67, 642.8, 1595.74, 1418.96, 14.62, 21.61, 552.98, 2388.19, 9034.32, 1.3, 47.92, 520.74, 2388.16, 8113.02, 8.427, 0.03, 395.0, 2388.0, 100.0, 38.58, 23.2542]},
+    {"cycle": 120, "settings": [-0.0036, -0.0002, 100.0], "sensors": [518.67, 642.85, 1590.91, 1411.16, 14.62, 21.61, 552.96, 2388.18, 9042.78, 1.3, 47.73, 520.84, 2388.19, 8117.1, 8.4814, 0.03, 395.0, 2388.0, 100.0, 38.66, 23.1651]},
+    {"cycle": 121, "settings": [-0.0009, 0.0003, 100.0], "sensors": [518.67, 643.05, 1595.73, 1411.45, 14.62, 21.61, 551.77, 2388.2, 9029.71, 1.3, 47.75, 520.82, 2388.21, 8115.38, 8.4697, 0.03, 394.0, 2388.0, 100.0, 38.85, 23.1929]},
+    {"cycle": 122, "settings": [-0.0001, -0.0005, 100.0], "sensors": [518.67, 643.08, 1590.89, 1416.28, 14.62, 21.61, 552.33, 2388.18, 9039.51, 1.3, 47.82, 520.8, 2388.21, 8116.5, 8.506, 0.03, 393.0, 2388.0, 100.0, 38.61, 23.3348]},
+    {"cycle": 123, "settings": [-0.0018, 0.0001, 100.0], "sensors": [518.67, 642.54, 1594.24, 1416.76, 14.62, 21.61, 553.02, 2388.19, 9036.88, 1.3, 47.64, 520.61, 2388.2, 8115.82, 8.4533, 0.03, 395.0, 2388.0, 100.0, 38.84, 23.1718]}
+  ]
+}'
+```
+
+Captured live response for this request (bundle trained by
+`scripts/train_service.py`, run with the owner's approval — the
+artifacts are pickle files and are loaded only on an explicit
+go-ahead):
+
+```json
+{
+  "asset_id": "fd001-test-engine-41",
+  "predicted_rul": 73.356,
+  "health_index": 35.211,
+  "anomaly_score": 0.563,
+  "anomaly_percentile": 100.0,
+  "alert_level": "critical",
+  "model_version": "0.3.0",
+  "scored_at": "2026-11-24T04:31:28.616436Z"
+}
+```
+
+Compare the offline records for engine 41 at cycle 123: predicted
+RUL **75.25** (`results/test_predictions.csv`) and health **36**
+(`results/m2_metrics.json`, dangerous-overestimate check). The small
+delta is the training set, not an inconsistency: the offline model
+was fit on the 80-engine evaluation split, the shipped bundle on all
+100 training engines. The behaviour the composite was built for is
+identical — the RUL model is calm (73 cycles left, it claims) while
+the anomaly component sits at the 100th percentile and pulls health
+under the alert line, so the alert fires: `critical`.
+
+### Running the service
+
+```bash
+.venv/bin/python scripts/train_service.py          # once: build models/
+.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+```
+
+The models directory resolves as `RELAYOPS_ML_MODELS_DIR` env var >
+`./models`. In Docker, the default command still runs tests + smoke;
+serve by overriding it and mounting the bundle (see the Dockerfile
+header). **Auth:** none by default — demo scope. If
+`RELAYOPS_ML_API_KEY` is set, the scoring endpoints require a matching
+`X-API-Key` header (`/healthz` stays open); that shared-secret stub is
+where the RelayOps worker will present its credential, and it is not a
+substitute for real auth in a non-demo deployment.
+
 ## Limitations
 
 - FD002 attempted (above): the pipeline degrades materially under six
@@ -311,8 +453,17 @@ What the numbers say, plainly:
   downward (failure mode 1); a two-stage or uncapped-with-sample-weighting
   variant is a known next experiment, not yet run.
 - No per-engine uncertainty estimate; point predictions only.
+- The service serves the FD001-regime model only: the FD002 result
+  above is why `/score` documents FD001 validity — windows from a
+  multi-condition fleet would be scored by a model that was never
+  validated there. The API also trusts the caller's cycle counter as
+  engine age and scores windows exactly as given; plausibility checks
+  beyond schema validation (e.g. sensor ranges per asset) are future
+  work, as is episode-level alerting (M2 limitation, inherited).
+- Auth is a shared-secret stub behind an env flag (demo scope, above).
 - The Dockerfile is written to spec but has **not been build-verified**
-  (no Docker daemon on the build machine). Its default command runs the
+  (no Docker daemon on the build machine) — this now includes the M3
+  API entrypoint documented in its header. Its default command runs the
   test suite plus a synthetic-data smoke train, which do pass locally.
 
 ## How to run
@@ -321,10 +472,12 @@ What the numbers say, plainly:
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # place train_FD001.txt / test_FD001.txt / RUL_FD001.txt in data/
 # (NASA C-MAPSS distribution; see "Data" above; FD002 files likewise)
-.venv/bin/python -m pytest tests/ -q     # 35 tests
+.venv/bin/python -m pytest tests/ -q     # 52 tests
 .venv/bin/python scripts/train.py        # M1: writes results/ + models/
 .venv/bin/python scripts/run_m2.py       # M2: anomaly, health, alerts
 .venv/bin/python scripts/run_fd002.py    # M2 stretch: FD002 run
+.venv/bin/python scripts/train_service.py  # M3: service bundle -> models/
+.venv/bin/uvicorn api.main:app --port 8000   # M3: serve the API
 .venv/bin/python scripts/smoke.py        # synthetic-data pipeline check
 ```
 
@@ -346,9 +499,16 @@ scripts/train.py  M1 end-to-end train + evaluate -> results/metrics.json
 scripts/run_m2.py M2: anomaly + health + alert decision -> m2_metrics.json,
                   alert_thresholds.csv, anomaly_lead_times.csv
 scripts/run_fd002.py  FD002 baseline + condition-normalized -> fd002_metrics.json
+scripts/train_service.py  M3: train the deployable bundle -> models/
+                  (rul_model.joblib, anomaly_detector.joblib,
+                  reference_scores.npy, model_card.json)
 scripts/smoke.py  synthetic-data smoke run (Docker default command)
+api/main.py       FastAPI app: /healthz, /score, /score/batch
+api/schemas.py    pydantic request/response schemas (reject, never repair)
+api/artifacts.py  bundle save/load: checksums, feature-list validation,
+                  fail-fast startup, alert-level mapping
 tests/            parsing, labels, leakage, metrics, model, anomaly,
-                  health, alerts (35 tests)
+                  health, alerts, API + artifact loader (52 tests)
 results/          metrics.json (M1), m2_metrics.json, fd002_metrics.json,
                   alert_thresholds.csv, anomaly_lead_times.csv,
                   test_predictions.csv, feature_columns.json
