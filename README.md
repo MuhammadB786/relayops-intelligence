@@ -7,14 +7,15 @@ an API. This repository is deliberately separate from the RelayOps web app:
 the model pipeline is a portfolio-grade, independently deployable artifact,
 and integration is API-only (Milestone 3).
 
-**Status: Milestone 3 complete** — M1 (data pipeline, baseline RUL model,
+**Status: Milestone 4 complete** — M1 (data pipeline, baseline RUL model,
 honest published evaluation), M2 (anomaly detection, a composite health
 index, a costed alert-threshold decision, and a generalization run on the
-harder FD002 subset), and M3: the FastAPI scoring service below, serving
-the trained M1+M2 components from a checksummed artifact bundle. The
-RelayOps-side integration (predictions table, worker route, UI) is a
-separate change with its own checkpoint; a live sensor simulator with
-drift monitoring (M4) and the full case study (M5) follow.
+harder FD002 subset), M3: the FastAPI scoring service below, serving
+the trained M1+M2 components from a checksummed artifact bundle, and
+M4: a data-derived sensor simulator, a live scoring demo, and PSI drift
+monitoring with an evaluated retraining trigger. The RelayOps-side
+integration (predictions table, worker route, UI) is a separate change
+with its own checkpoint; the full case study (M5) follows.
 
 ## Problem
 
@@ -436,6 +437,120 @@ header). **Auth:** none by default — demo scope. If
 where the RelayOps worker will present its credential, and it is not a
 substitute for real auth in a non-demo deployment.
 
+## Milestone 4 — live simulator + drift monitoring
+
+### Sensor simulator
+
+`src/simulator.py` generates synthetic assets and replays recorded
+ones. Nothing about the synthetic asset is hand-invented: every
+parameter is measured from the FD001 training engines by
+`derive_params` —
+
+- **Baselines**: per-sensor means over cycles ≤ 30 (healthy early
+  life). Each simulated asset draws its own baseline offset from the
+  observed *between-engine* spread of those means, because real
+  engines start at slightly different baselines.
+- **Noise**: per-cycle Gaussian noise at the observed *within-engine*
+  healthy standard deviation.
+- **Degradation**: per sensor, the drift actually measured in the
+  data — per engine, mean of the last 10% of life minus mean of the
+  first 10%, averaged over engines — applied along a convex
+  exponential wear curve over life fraction (slow early, accelerating
+  late; `k = 2.5`). In units of each sensor's healthy noise σ, the
+  full-life movers are: sensor_9 **+8.4**, sensor_14 **+7.9**,
+  sensor_11 **+6.8**, sensor_12 **−6.0**, sensor_4 **+5.7**,
+  sensor_7 **−5.3**, sensor_13 **+5.0**, sensor_8 **+4.7**,
+  sensor_15 **+4.5**, sensor_20/21 **−4.2**, sensor_2 **+3.7**,
+  sensor_17 **+3.7**, sensor_3 **+3.4**. Sensor_6 measures +0.35σ and
+  barely moves; the six constant FD001 channels measure zero and stay
+  constant. Settings are sampled from their observed FD001
+  distribution — FD001 is a single operating condition, so setting
+  jitter is the only regime variation the data contains.
+- **Replay mode**: a recorded FD001 test engine streamed verbatim.
+
+### Live scoring demo
+
+`scripts/run_live_demo.py` streams two assets through the M3 service
+(in-process via FastAPI's `TestClient` — the real HTTP routes,
+validation and artifact loader; only the transport is in-process),
+POSTing the growing window each cycle and logging every scored cycle
+to `results/live_demo_log.csv`. Headline crossings use a
+**confirmation rule** — health at/below the band for 5 consecutive
+scored cycles — because the raw per-cycle series flaps around band
+edges (both assets open with a two-cycle "watch" blip at cycles
+11–12, a residual of the M2 warm-up boundary in the anomaly
+component); raw first crossings are reported alongside.
+
+| Asset | Watch (sustained) | Critical (raw first / sustained) | Lead time (sustained) | Final health / pred. RUL |
+|---|---|---|---|---|
+| `sim-pump-01` — synthetic, 190-cycle designed life, drift scale 1.0 | cycle 87 | 96 / **98** | **92 cycles** | 5.6 / 11.7 at cycle 190 |
+| FD001 test engine 41 — replay (observed to 123, true end of life 141) | cycle 85 | 91 / **113** | **28 cycles** | 36.1 / 75.3 at cycle 123 |
+
+The synthetic asset traverses none → watch → critical in order and
+reaches sustained critical at 52% of its designed life — early,
+because the M2 operating point is deliberately recall-heavy. The
+replay reproduces the M2 offline values for engine 41 exactly
+(health 36.1, RUL 75.3 through full-history windows) and shows the
+composite doing its job live: the RUL model stays calm while the
+anomaly component pulls health under the line 28 cycles before the
+engine's true end of life. Chart: `results/live_demo_health.png`.
+
+### Drift monitoring
+
+`src/drift.py`: per-sensor **Population Stability Index** against a
+reference distribution (decile bins from the reference; a heavily
+quantized channel — sensor_6 takes two values in healthy data — is
+binned on its distinct values instead). Bands: < 0.10 stable,
+0.10–0.25 moderate, ≥ 0.25 significant. **Retraining trigger:
+retraining is recommended when ≥ 3 sensors show PSI > 0.25 in each of
+2 consecutive monitored windows** — one hot window is an incident,
+not a retraining decision.
+
+Evaluation (`scripts/run_drift_eval.py`) is cycle-matched: every
+engine contributes cycles 11–38 — past warm-up, and inside the first
+30% of life for every FD001 engine (shortest life 128). Reference =
+the 80 training-split engines; windows = the 20 held-out validation
+engines in two halves. Cycle-matching is itself a measured design
+point: with "first 30% of life" windows, the unshifted control
+**false-fires** the trigger, because fraction-of-life windows mix
+different absolute cycle ranges and FD001 sensors trend with absolute
+cycle.
+
+| Case | Shifted-sensor PSI (window A / B) | Health PSI | Trigger |
+|---|---|---|---|
+| Control (unshifted held-out) | — | 0.021 | **does not fire** ✓ |
+| +0.25 reference-σ on sensors 2, 4, 11 | 0.14–0.18 (B) | 0.031 | does not fire — below the rule |
+| +0.5 reference-σ | A: 0.06–0.09 · B: 0.37–0.40 | 0.085 | does not fire — visible in one window, not sustained |
+| +1.0 reference-σ | 1.18–1.60 (both) | 0.80 | **fires** ✓ |
+
+(Shift sizes are in units of the reference distribution's per-sensor
+standard deviation — the spread PSI compares against. A first sweep
+in within-engine noise σ produced window-dependent near-misses at the
+same physical shift, because the pooled marginal also carries
+between-engine variation.)
+
+Two findings worth more than the headline:
+
+- **The detection boundary is ≈ 1 reference-σ, and it is the
+  persistence rule that sets it.** At 0.5σ the identical bias reads
+  PSI 0.37–0.40 in one engine group and 0.06–0.09 in the other — the
+  same recalibration is plainly visible in one window and nearly
+  invisible in the next, purely from engine composition. The 2-window
+  rule trades exactly this sensitivity for the control's clean
+  result; that trade is stated, not hidden.
+- **Pooled PSI is composition-sensitive on between-engine channels.**
+  In the unshifted control, sensor_14's pooled PSI is **1.72** and
+  sensor_9's is 0.34 in one window — no engine drifted. The variance
+  decomposition explains it: 84% (sensor_14) and 75% (sensor_9) of
+  those channels' pooled variance is *between*-engine, vs 28% for a
+  calm channel (sensor_3, control PSI ≈ 0.02–0.05). A 10-engine
+  window's marginal on such a channel is mostly a lottery of which
+  engines are in it. Single-sensor PSI alarms would false-fire here;
+  the ≥3-sensor × 2-window rule is what keeps the control clean
+  (windows flag 1 and 2 sensors). Monitoring the *same* assets over
+  time — the deployment-realistic setup — removes the confound;
+  per-asset PSI is the named design for that case.
+
 ## Limitations
 
 - FD002 attempted (above): the pipeline degrades materially under six
@@ -461,6 +576,17 @@ substitute for real auth in a non-demo deployment.
   beyond schema validation (e.g. sensor ranges per asset) are future
   work, as is episode-level alerting (M2 limitation, inherited).
 - Auth is a shared-secret stub behind an env flag (demo scope, above).
+- The simulator is a *model* of degradation, not physics: drift is
+  linear in a chosen wear curve per sensor, noise is independent
+  Gaussian per channel (FD001's cross-sensor correlation structure is
+  not reproduced), and it inherits FD001's single operating condition.
+- PSI is univariate — a correlation-only drift with unchanged
+  marginals is invisible to it — and pooled PSI is composition-
+  sensitive on between-engine-dominated channels (measured in M4:
+  sensor_14 reads PSI 1.72 across unshifted engine groups). The
+  retraining trigger's measured sensitivity floor is ≈ 1 reference-σ
+  of sustained bias; smaller recalibrations show in the PSI table but
+  do not trip the rule.
 - The Dockerfile is written to spec but has **not been build-verified**
   (no Docker daemon on the build machine) — this now includes the M3
   API entrypoint documented in its header. Its default command runs the
@@ -472,12 +598,14 @@ substitute for real auth in a non-demo deployment.
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # place train_FD001.txt / test_FD001.txt / RUL_FD001.txt in data/
 # (NASA C-MAPSS distribution; see "Data" above; FD002 files likewise)
-.venv/bin/python -m pytest tests/ -q     # 52 tests
+.venv/bin/python -m pytest tests/ -q     # 68 tests
 .venv/bin/python scripts/train.py        # M1: writes results/ + models/
 .venv/bin/python scripts/run_m2.py       # M2: anomaly, health, alerts
 .venv/bin/python scripts/run_fd002.py    # M2 stretch: FD002 run
 .venv/bin/python scripts/train_service.py  # M3: service bundle -> models/
 .venv/bin/uvicorn api.main:app --port 8000   # M3: serve the API
+.venv/bin/python scripts/run_live_demo.py  # M4: simulator + replay, live-scored
+.venv/bin/python scripts/run_drift_eval.py # M4: drift trigger evaluation
 .venv/bin/python scripts/smoke.py        # synthetic-data pipeline check
 ```
 
@@ -495,6 +623,8 @@ src/evaluate.py   RMSE, NASA asymmetric score, last-cycle selection
 src/anomaly.py    IsolationForest on healthy life, scores, lead times
 src/health.py     composite 0-100 health index (documented formula)
 src/alerts.py     alert confusion/precision/recall, costed threshold sweep
+src/simulator.py  M4 synthetic asset generator (data-derived params) + replay
+src/drift.py      M4 PSI drift monitoring + retraining-trigger rule
 scripts/train.py  M1 end-to-end train + evaluate -> results/metrics.json
 scripts/run_m2.py M2: anomaly + health + alert decision -> m2_metrics.json,
                   alert_thresholds.csv, anomaly_lead_times.csv
@@ -502,16 +632,23 @@ scripts/run_fd002.py  FD002 baseline + condition-normalized -> fd002_metrics.jso
 scripts/train_service.py  M3: train the deployable bundle -> models/
                   (rul_model.joblib, anomaly_detector.joblib,
                   reference_scores.npy, model_card.json)
+scripts/run_live_demo.py  M4: stream synthetic + replayed assets through
+                  the API -> live_demo_log.csv, live_demo_health.png,
+                  m4_metrics.json
+scripts/run_drift_eval.py M4: drift trigger control + shift sweep
+                  -> m4_metrics.json (drift_evaluation)
 scripts/smoke.py  synthetic-data smoke run (Docker default command)
 api/main.py       FastAPI app: /healthz, /score, /score/batch
 api/schemas.py    pydantic request/response schemas (reject, never repair)
 api/artifacts.py  bundle save/load: checksums, feature-list validation,
                   fail-fast startup, alert-level mapping
 tests/            parsing, labels, leakage, metrics, model, anomaly,
-                  health, alerts, API + artifact loader (52 tests)
+                  health, alerts, API + artifact loader, simulator,
+                  drift (68 tests)
 results/          metrics.json (M1), m2_metrics.json, fd002_metrics.json,
                   alert_thresholds.csv, anomaly_lead_times.csv,
-                  test_predictions.csv, feature_columns.json
+                  test_predictions.csv, feature_columns.json,
+                  m4_metrics.json, live_demo_log.csv, live_demo_health.png
 ```
 
 ## References
