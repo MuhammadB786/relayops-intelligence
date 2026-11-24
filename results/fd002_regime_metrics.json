@@ -1,0 +1,203 @@
+{
+  "subset": "FD002",
+  "seed": 42,
+  "rul_cap": 125,
+  "n_regimes": 6,
+  "min_regime_engines": 10,
+  "selection_rule": "lowest validation RMSE (fixed-horizon checkpoint protocol); winner refit on all training engines and scored once on test",
+  "references": {
+    "global_baseline_test": {
+      "train_engines": 260,
+      "dropped_constant_columns": [],
+      "n_features": 121,
+      "engines": 259,
+      "rmse": 27.59991384034533,
+      "nasa_score": 8658.059682119929
+    },
+    "condition_normalized_test": {
+      "train_engines": 260,
+      "dropped_constant_columns": [
+        "sensor_18"
+      ],
+      "n_features": 116,
+      "engines": 259,
+      "rmse": 27.71517202485555,
+      "nasa_score": 13665.769511377814
+    },
+    "global_baseline_validation": {
+      "train_engines": 208,
+      "val_engines": 52,
+      "protocol": "predictions at true RUL in [100, 75, 50, 25, 10]",
+      "points": 260,
+      "engines": 52,
+      "rmse": 17.703285836057056,
+      "nasa_score": 2152.4368152683164
+    }
+  },
+  "dataset": {
+    "train_rows": 53759,
+    "train_engines": 260,
+    "test_rows": 33991,
+    "test_engines": 259
+  },
+  "validation_regime_stats": {
+    "0": {
+      "rows": 10712,
+      "engines": 208
+    },
+    "1": {
+      "rows": 6431,
+      "engines": 208
+    },
+    "2": {
+      "rows": 6344,
+      "engines": 208
+    },
+    "3": {
+      "rows": 6402,
+      "engines": 208
+    },
+    "4": {
+      "rows": 6489,
+      "engines": 208
+    },
+    "5": {
+      "rows": 6419,
+      "engines": 208
+    }
+  },
+  "candidates": {
+    "global": {
+      "validation": {
+        "train_engines": 208,
+        "val_engines": 52,
+        "protocol": "predictions at true RUL in [100, 75, 50, 25, 10]",
+        "points": 260,
+        "engines": 52,
+        "rmse": 17.703285836057056,
+        "nasa_score": 2152.4368152683164,
+        "seconds": 14.5
+      }
+    },
+    "global_plus_regime": {
+      "validation": {
+        "train_engines": 208,
+        "val_engines": 52,
+        "protocol": "predictions at true RUL in [100, 75, 50, 25, 10]",
+        "points": 260,
+        "engines": 52,
+        "rmse": 17.820269410479558,
+        "nasa_score": 2138.65892786097,
+        "seconds": 23.2
+      }
+    },
+    "per_regime": {
+      "validation": {
+        "train_engines": 208,
+        "val_engines": 52,
+        "protocol": "predictions at true RUL in [100, 75, 50, 25, 10]",
+        "points": 260,
+        "engines": 52,
+        "rmse": 17.364652131224336,
+        "nasa_score": 2488.845048955635,
+        "seconds": 1246.79,
+        "regime_stats": {
+          "0": {
+            "rows": 10712,
+            "engines": 208
+          },
+          "1": {
+            "rows": 6431,
+            "engines": 208
+          },
+          "2": {
+            "rows": 6344,
+            "engines": 208
+          },
+          "3": {
+            "rows": 6402,
+            "engines": 208
+          },
+          "4": {
+            "rows": 6489,
+            "engines": 208
+          },
+          "5": {
+            "rows": 6419,
+            "engines": 208
+          }
+        },
+        "fallback_regimes": []
+      },
+      "test_official_last_cycle": {
+        "train_engines": 260,
+        "n_features": 121,
+        "engines": 259,
+        "rmse": 28.270337558259687,
+        "nasa_score": 11064.538175636613,
+        "engines_late_over_30": 12,
+        "engines_early_over_30": 45,
+        "max_late_error": 55.664853577715334,
+        "max_early_error": -98.05234547285288,
+        "top5_engine_score_share": 0.5803083333646919,
+        "seconds": 84.72,
+        "regime_stats": {
+          "0": {
+            "rows": 13458,
+            "engines": 260
+          },
+          "1": {
+            "rows": 8044,
+            "engines": 260
+          },
+          "2": {
+            "rows": 8122,
+            "engines": 260
+          },
+          "3": {
+            "rows": 8002,
+            "engines": 260
+          },
+          "4": {
+            "rows": 8096,
+            "engines": 260
+          },
+          "5": {
+            "rows": 8037,
+            "engines": 260
+          }
+        },
+        "fallback_regimes": [],
+        "test_last_cycle_rows_served_by_fallback": 0
+      }
+    }
+  },
+  "selected": "per_regime",
+  "final_regime_stats": {
+    "0": {
+      "rows": 13458,
+      "engines": 260
+    },
+    "1": {
+      "rows": 8044,
+      "engines": 260
+    },
+    "2": {
+      "rows": 8122,
+      "engines": 260
+    },
+    "3": {
+      "rows": 8002,
+      "engines": 260
+    },
+    "4": {
+      "rows": 8096,
+      "engines": 260
+    },
+    "5": {
+      "rows": 8037,
+      "engines": 260
+    }
+  },
+  "total_seconds": 1377.01
+}
