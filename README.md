@@ -1,5 +1,10 @@
 # RelayOps ML — Predictive Maintenance Intelligence
 
+[![CI](https://github.com/MuhammadB786/relayops-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadB786/relayops-intelligence/actions/workflows/ci.yml)
+![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
+![Tests](https://img.shields.io/badge/tests-75%20passing-brightgreen)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+
 A standalone Python ML service that scores equipment health and
 remaining useful life (RUL) for [RelayOps](https://github.com/MuhammadB786/RelayOps)
 (a maintenance & reliability platform) and feeds predictions back to it
@@ -7,15 +12,21 @@ over an API. This repository is deliberately separate from the RelayOps
 web app: the model pipeline is a portfolio-grade, independently
 deployable artifact, and integration is API-only.
 
-**Status: Milestones 1–4 complete.** M1 — data pipeline, baseline RUL
+**Status: Milestones 1–6 complete.** M1 — data pipeline, baseline RUL
 model, evaluation against published baselines. M2 — anomaly detection,
 a composite health index, a costed alert-threshold decision, and a
 generalization run on the harder FD002 subset. M3 — a FastAPI scoring
 service serving the trained components from a checksummed artifact
 bundle. M4 — a data-derived sensor simulator, a live scoring demo, and
-PSI drift monitoring with an evaluated retraining trigger. This case
-study is M5; deployment is prepared (`render.yaml`, see *Deploying*)
-but not yet performed, and the RelayOps-side integration (predictions
+PSI drift monitoring with an evaluated retraining trigger. M5 — this
+case study. M6 — FD002 regime (per-operating-condition) models: a
+second documented negative result. Deployment is prepared but not yet
+performed: both free routes were attempted in November 2026 and are
+gated by the hosts — Render requires a credit card for identity
+verification before creating any service on a new account, and
+Hugging Face now requires a PRO subscription for Docker Spaces
+(packages ready in `render.yaml` and `deploy/hf/`). The RelayOps-side
+integration (predictions
 table, worker route, UI) is **not built yet** — it is a separate change
 gated on the RelayOps app's own Cloudflare deployment. Nothing below
 claims otherwise.
@@ -248,10 +259,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python scripts/train.py             # M1 -> results/metrics.json            (~19 s)
 .venv/bin/python scripts/run_m2.py            # M2 -> results/m2_metrics.json + CSVs  (~21 s)
 .venv/bin/python scripts/run_fd002.py         # FD002 -> results/fd002_metrics.json   (~101 s)
+.venv/bin/python scripts/run_fd002_regimes.py # M6 -> results/fd002_regime_metrics.json (stage timings in the JSON)
 .venv/bin/python scripts/train_service.py     # M3 bundle -> models/                  (~13 s)
 .venv/bin/python scripts/run_live_demo.py     # M4 demo -> results/m4_metrics.json    (~33 s)
 .venv/bin/python scripts/run_drift_eval.py    # M4 drift -> m4_metrics.json section   (~3.4 s)
-.venv/bin/python -m pytest tests/ -q          # 68 tests, synthetic data only, no downloads
+.venv/bin/python -m pytest tests/ -q          # 75 tests, synthetic data only, no downloads
 ```
 
 ---
@@ -785,6 +797,86 @@ Two findings worth more than the headline:
   time — the deployment-realistic setup — removes the confound;
   per-asset PSI is the named design for that case.
 
+## M6 — FD002 regime models
+
+M2's FD002 section named the follow-up experiments — per-condition
+models, and condition identity as an explicit model feature — and M6
+runs both, against the unchanged global baseline as control. Selection
+discipline, fixed before any test number existed: the candidate with
+the lowest **validation** RMSE (the same fixed-horizon checkpoint
+protocol) is refit on all 260 training engines and scored **once** on
+the official test set; the other candidates never touch the test set.
+Regimes are KMeans (k=6) on the three operating settings,
+standardised, fit on training rows only at each stage, with
+nearest-centroid assignment for any later row (`src/regimes.py`):
+
+- **A — global + regime features:** the baseline model plus the
+  regime id and the row's distance to all six centroids (a soft
+  membership profile), 7 extra features (128 total).
+- **B — per-regime models:** one gradient-boosting model per regime,
+  trained on that regime's rows, behind the global model; a regime
+  with fewer than 10 distinct training engines falls back to the
+  global model.
+
+| Candidate | Validation RMSE / score | Test RMSE / score |
+|---|---|---|
+| Global baseline (control) | 17.70 / 2152 | 27.60 / 8658 (from M2) |
+| A: global + regime features | 17.82 / 2139 | — not run (not selected) |
+| B: per-regime models | **17.36** / 2489 | 28.27 / 11,065 |
+| M2 condition-normalized (reference) | 16.16 / 1655 | 27.72 / 13,666 |
+
+(The control's validation here reproduces M2's baseline exactly —
+17.703 / 2152.4 — confirming the pipeline is unchanged.)
+
+What the numbers say, plainly:
+
+- **Validation disagreed with itself.** B had the best validation
+  RMSE and the *worst* validation NASA score (2,489 vs the baseline's
+  2,152). A was a wash: RMSE a hair worse (17.82 vs 17.70), score a
+  hair better (2,139 vs 2,152). Regime identity as a feature gave the
+  global model nothing it could not already extract from the raw
+  settings, which are themselves features.
+- **The test repeated M2's lesson.** B, selected on validation RMSE,
+  lost to the plain global baseline on the official test on *both*
+  metrics (RMSE 28.27 vs 27.60; score 11,065 vs 8,658). Against the
+  failed normalization it splits — worse RMSE (28.27 vs 27.72),
+  better score (11,065 vs 13,666). Verdict: per-regime models as
+  implemented are **not validated** — the second regime-conditional
+  remedy in a row to win validation and lose where it counts.
+- **Tail analysis.** B made fewer very-late predictions than the
+  baseline (12 engines late by >30 cycles, vs 16) but its single
+  worst late miss was worse (+56 vs +49 cycles), and the five worst
+  engines account for 58% of its score (baseline 55%, normalization
+  68%). It also predicted far too early on many engines — 45 engines
+  early by >30 cycles, worst −98 — per-regime models trained on
+  operating-point slices look conservative on truncated test
+  endpoints while still missing the tail that decides the score.
+- **The fallback never fired, and that is itself a finding.** Every
+  regime contains rows from *all* 260 training engines (regime sizes
+  8,002–13,458 rows): FD002 engines visit every operating condition
+  over their lives, so per-regime models are not models of distinct
+  engine populations — just of operating points, each trained on a
+  thinner slice of every engine's trajectory. The <10-engine fallback
+  guards a deployment case (a fleet where a regime is genuinely
+  rare), not this dataset; it is exercised in unit tests only.
+- **Where this points.** Two different regime-conditional remedies
+  (M2 normalization, M6 per-regime) have now failed the same way, and
+  regime features were neutral. The remaining gap looks less like
+  regime confusion and more like the model class and features under
+  the train/test endpoint shift. Named next experiment, not a claim:
+  a single global model with sample weighting toward late-life
+  cycles, under the same selection discipline.
+
+Reproduce: `python scripts/run_fd002_regimes.py` →
+`results/fd002_regime_metrics.json` (validation for all candidates,
+test for the selected one, regime sizes, fallback counts, per-stage
+timings; the recorded run took 1,377 s wall on a CPU-throttled VM —
+the uncontended final-refit stage took 85 s). Test suite: **75
+passing**, 7 of them new in `tests/test_regimes.py` (assignment
+determinism, clustering fit on train rows only, nearest-centroid
+assignment for out-of-envelope rows, sparse-regime fallback, tiny
+end-to-end run).
+
 ## Limitations
 
 - FD002 attempted (above): the pipeline degrades materially under six
@@ -860,7 +952,7 @@ noted in Limitations, is not build-verified.
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python scripts/fetch_data.py   # C-MAPSS -> data/ (or place the
                                          # files manually; see "Data" above)
-.venv/bin/python -m pytest tests/ -q     # 68 tests
+.venv/bin/python -m pytest tests/ -q     # 75 tests
 .venv/bin/python scripts/train.py        # M1: writes results/ + models/
 .venv/bin/python scripts/run_m2.py       # M2: anomaly, health, alerts
 .venv/bin/python scripts/run_fd002.py    # M2 stretch: FD002 run
@@ -907,8 +999,9 @@ api/artifacts.py  bundle save/load: checksums, feature-list validation,
                   fail-fast startup, alert-level mapping
 tests/            parsing, labels, leakage, metrics, model, anomaly,
                   health, alerts, API + artifact loader, simulator,
-                  drift (68 tests)
+                  drift, regimes (75 tests)
 results/          metrics.json (M1), m2_metrics.json, fd002_metrics.json,
+                  fd002_regime_metrics.json (M6),
                   alert_thresholds.csv, anomaly_lead_times.csv,
                   test_predictions.csv, feature_columns.json,
                   m4_metrics.json, live_demo_log.csv, live_demo_health.png
