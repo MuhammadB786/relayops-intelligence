@@ -1,0 +1,11 @@
+reference_percentile,threshold,detection_rate,median_lead_time_detected,mean_lead_time_detected,false_alarm_rate_healthy_cycles,frac_engines_any_false_alarm,eval_set
+90.0,0.4828,1.0,140.5,140.75,0.1601,0.95,validation
+95.0,0.4929,1.0,106.0,120.2,0.1092,0.7,validation
+97.5,0.5014,1.0,78.0,109.05,0.0802,0.65,validation
+99.0,0.5089,1.0,71.5,105.5,0.0607,0.65,validation
+99.5,0.5168,1.0,64.0,90.85,0.0477,0.55,validation
+90.0,0.4833,0.76,158.0,156.5526,0.128,0.73,test
+95.0,0.4936,0.67,148.0,144.5075,0.0833,0.6,test
+97.5,0.5019,0.6,124.5,130.2333,0.0554,0.46,test
+99.0,0.5117,0.53,112.0,113.7925,0.0354,0.39,test
+99.5,0.5175,0.45,81.0,100.1556,0.0271,0.27,test

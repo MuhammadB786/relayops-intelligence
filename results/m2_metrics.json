@@ -1,0 +1,353 @@
+{
+  "milestone": "M2",
+  "seed": 42,
+  "healthy_fraction": 0.3,
+  "warmup_cycles_excluded": 10,
+  "healthy_segment_rul_min": 60.0,
+  "alert_horizon": 30,
+  "cost_model": {
+    "false_alarm": 1.0,
+    "missed_failure": 50.0
+  },
+  "threshold_percentiles": [
+    90.0,
+    95.0,
+    97.5,
+    99.0,
+    99.5
+  ],
+  "validation_reference_healthy_rows": 4160,
+  "anomaly_validation": [
+    {
+      "reference_percentile": 90.0,
+      "threshold": 0.4828,
+      "detection_rate": 1.0,
+      "median_lead_time_detected": 140.5,
+      "mean_lead_time_detected": 140.75,
+      "false_alarm_rate_healthy_cycles": 0.1601,
+      "frac_engines_any_false_alarm": 0.95
+    },
+    {
+      "reference_percentile": 95.0,
+      "threshold": 0.4929,
+      "detection_rate": 1.0,
+      "median_lead_time_detected": 106.0,
+      "mean_lead_time_detected": 120.2,
+      "false_alarm_rate_healthy_cycles": 0.1092,
+      "frac_engines_any_false_alarm": 0.7
+    },
+    {
+      "reference_percentile": 97.5,
+      "threshold": 0.5014,
+      "detection_rate": 1.0,
+      "median_lead_time_detected": 78.0,
+      "mean_lead_time_detected": 109.05,
+      "false_alarm_rate_healthy_cycles": 0.0802,
+      "frac_engines_any_false_alarm": 0.65
+    },
+    {
+      "reference_percentile": 99.0,
+      "threshold": 0.5089,
+      "detection_rate": 1.0,
+      "median_lead_time_detected": 71.5,
+      "mean_lead_time_detected": 105.5,
+      "false_alarm_rate_healthy_cycles": 0.0607,
+      "frac_engines_any_false_alarm": 0.65
+    },
+    {
+      "reference_percentile": 99.5,
+      "threshold": 0.5168,
+      "detection_rate": 1.0,
+      "median_lead_time_detected": 64.0,
+      "mean_lead_time_detected": 90.85,
+      "false_alarm_rate_healthy_cycles": 0.0477,
+      "frac_engines_any_false_alarm": 0.55
+    }
+  ],
+  "health_validation": {
+    "composite": {
+      "engines": 20,
+      "median_spearman_vs_cycle": -0.9298,
+      "mean_spearman_vs_cycle": -0.7872,
+      "frac_engines_spearman_negative": 1.0,
+      "frac_engines_slope_negative": 1.0,
+      "frac_engines_end_below_start": 1.0
+    },
+    "rul_only": {
+      "engines": 20,
+      "median_spearman_vs_cycle": -0.9737,
+      "mean_spearman_vs_cycle": -0.9694,
+      "frac_engines_spearman_negative": 1.0,
+      "frac_engines_slope_negative": 1.0,
+      "frac_engines_end_below_start": 1.0
+    },
+    "anomaly_only": {
+      "engines": 20,
+      "median_spearman_vs_cycle": -0.8176,
+      "mean_spearman_vs_cycle": -0.6382,
+      "frac_engines_spearman_negative": 1.0,
+      "frac_engines_slope_negative": 0.95,
+      "frac_engines_end_below_start": 1.0
+    }
+  },
+  "alert_operating_points": {
+    "chosen_on_validation": {
+      "predicted_rul": {
+        "eval_set": "validation",
+        "signal": "predicted_rul",
+        "threshold": 90.0,
+        "tp": 618,
+        "fp": 1011,
+        "fn": 2,
+        "tn": 2144,
+        "precision": 0.3794,
+        "recall": 0.9968,
+        "expected_cost": 1111.0,
+        "selection_cost_fn": 50.0,
+        "selection_expected_cost": 1111.0
+      },
+      "health_index": {
+        "eval_set": "validation",
+        "signal": "health_index",
+        "threshold": 50.0,
+        "tp": 620,
+        "fp": 824,
+        "fn": 0,
+        "tn": 2331,
+        "precision": 0.4294,
+        "recall": 1.0,
+        "expected_cost": 824.0,
+        "selection_cost_fn": 50.0,
+        "selection_expected_cost": 824.0
+      }
+    },
+    "cost_sensitivity": {
+      "10": {
+        "predicted_rul": {
+          "eval_set": "validation",
+          "signal": "predicted_rul",
+          "threshold": 60.0,
+          "tp": 598,
+          "fp": 416,
+          "fn": 22,
+          "tn": 2739,
+          "precision": 0.5897,
+          "recall": 0.9645,
+          "expected_cost": 1516.0,
+          "selection_cost_fn": 10.0,
+          "selection_expected_cost": 636.0
+        },
+        "health_index": {
+          "eval_set": "validation",
+          "signal": "health_index",
+          "threshold": 30.0,
+          "tp": 599,
+          "fp": 402,
+          "fn": 21,
+          "tn": 2753,
+          "precision": 0.5984,
+          "recall": 0.9661,
+          "expected_cost": 1452.0,
+          "selection_cost_fn": 10.0,
+          "selection_expected_cost": 612.0
+        }
+      },
+      "50": {
+        "predicted_rul": {
+          "eval_set": "validation",
+          "signal": "predicted_rul",
+          "threshold": 90.0,
+          "tp": 618,
+          "fp": 1011,
+          "fn": 2,
+          "tn": 2144,
+          "precision": 0.3794,
+          "recall": 0.9968,
+          "expected_cost": 1111.0,
+          "selection_cost_fn": 50.0,
+          "selection_expected_cost": 1111.0
+        },
+        "health_index": {
+          "eval_set": "validation",
+          "signal": "health_index",
+          "threshold": 50.0,
+          "tp": 620,
+          "fp": 824,
+          "fn": 0,
+          "tn": 2331,
+          "precision": 0.4294,
+          "recall": 1.0,
+          "expected_cost": 824.0,
+          "selection_cost_fn": 50.0,
+          "selection_expected_cost": 824.0
+        }
+      },
+      "100": {
+        "predicted_rul": {
+          "eval_set": "validation",
+          "signal": "predicted_rul",
+          "threshold": 90.0,
+          "tp": 618,
+          "fp": 1011,
+          "fn": 2,
+          "tn": 2144,
+          "precision": 0.3794,
+          "recall": 0.9968,
+          "expected_cost": 1111.0,
+          "selection_cost_fn": 100.0,
+          "selection_expected_cost": 1211.0
+        },
+        "health_index": {
+          "eval_set": "validation",
+          "signal": "health_index",
+          "threshold": 50.0,
+          "tp": 620,
+          "fp": 824,
+          "fn": 0,
+          "tn": 2331,
+          "precision": 0.4294,
+          "recall": 1.0,
+          "expected_cost": 824.0,
+          "selection_cost_fn": 100.0,
+          "selection_expected_cost": 824.0
+        }
+      }
+    },
+    "chosen_evaluated_on_test": {
+      "predicted_rul": {
+        "threshold": 90.0,
+        "tp": 327,
+        "fp": 2546,
+        "fn": 5,
+        "tn": 9218,
+        "precision": 0.1138,
+        "recall": 0.9849,
+        "expected_cost": 2796.0
+      },
+      "health_index": {
+        "threshold": 50.0,
+        "tp": 330,
+        "fp": 1670,
+        "fn": 2,
+        "tn": 10094,
+        "precision": 0.165,
+        "recall": 0.994,
+        "expected_cost": 1770.0
+      }
+    },
+    "engine_level_on_test": {
+      "predicted_rul": {
+        "engines_reaching_window": 25,
+        "frac_engines_alerted_in_window_of_all": 0.25,
+        "frac_engines_alerted_in_window_of_reached": 1.0,
+        "frac_engines_false_alarm_healthy": 0.63
+      },
+      "health_index": {
+        "engines_reaching_window": 25,
+        "frac_engines_alerted_in_window_of_all": 0.25,
+        "frac_engines_alerted_in_window_of_reached": 1.0,
+        "frac_engines_false_alarm_healthy": 0.52
+      }
+    }
+  },
+  "test_reference_healthy_rows": 5144,
+  "warmup_diagnostic": {
+    "mean_anomaly_score_cycle_1": 0.5897,
+    "mean_anomaly_score_cycles_20_30": 0.451,
+    "frac_cycle_1_above_ref_97_5th_pct": 1.0
+  },
+  "anomaly_test": [
+    {
+      "reference_percentile": 90.0,
+      "threshold": 0.4833,
+      "detection_rate": 0.76,
+      "median_lead_time_detected": 158.0,
+      "mean_lead_time_detected": 156.5526,
+      "false_alarm_rate_healthy_cycles": 0.128,
+      "frac_engines_any_false_alarm": 0.73
+    },
+    {
+      "reference_percentile": 95.0,
+      "threshold": 0.4936,
+      "detection_rate": 0.67,
+      "median_lead_time_detected": 148.0,
+      "mean_lead_time_detected": 144.5075,
+      "false_alarm_rate_healthy_cycles": 0.0833,
+      "frac_engines_any_false_alarm": 0.6
+    },
+    {
+      "reference_percentile": 97.5,
+      "threshold": 0.5019,
+      "detection_rate": 0.6,
+      "median_lead_time_detected": 124.5,
+      "mean_lead_time_detected": 130.2333,
+      "false_alarm_rate_healthy_cycles": 0.0554,
+      "frac_engines_any_false_alarm": 0.46
+    },
+    {
+      "reference_percentile": 99.0,
+      "threshold": 0.5117,
+      "detection_rate": 0.53,
+      "median_lead_time_detected": 112.0,
+      "mean_lead_time_detected": 113.7925,
+      "false_alarm_rate_healthy_cycles": 0.0354,
+      "frac_engines_any_false_alarm": 0.39
+    },
+    {
+      "reference_percentile": 99.5,
+      "threshold": 0.5175,
+      "detection_rate": 0.45,
+      "median_lead_time_detected": 81.0,
+      "mean_lead_time_detected": 100.1556,
+      "false_alarm_rate_healthy_cycles": 0.0271,
+      "frac_engines_any_false_alarm": 0.27
+    }
+  ],
+  "health_test": {
+    "composite": {
+      "engines": 100,
+      "median_spearman_vs_cycle": -0.638,
+      "mean_spearman_vs_cycle": -0.4766,
+      "frac_engines_spearman_negative": 0.81,
+      "frac_engines_slope_negative": 0.82,
+      "frac_engines_end_below_start": 0.83
+    },
+    "rul_only": {
+      "engines": 100,
+      "median_spearman_vs_cycle": -0.9182,
+      "mean_spearman_vs_cycle": -0.8232,
+      "frac_engines_spearman_negative": 1.0,
+      "frac_engines_slope_negative": 1.0,
+      "frac_engines_end_below_start": 1.0
+    },
+    "anomaly_only": {
+      "engines": 100,
+      "median_spearman_vs_cycle": -0.2877,
+      "mean_spearman_vs_cycle": -0.2365,
+      "frac_engines_spearman_negative": 0.7,
+      "frac_engines_slope_negative": 0.69,
+      "frac_engines_end_below_start": 0.72
+    }
+  },
+  "dangerous_overestimate_check": {
+    "engine_41": {
+      "true_rul_at_last_cycle": 18.0,
+      "pred_rul_at_last_cycle": 75.2532,
+      "health_at_last_cycle": 36.1215,
+      "rul_alert_at_last_cycle": true,
+      "health_alert_at_last_cycle": true,
+      "rul_alert_any_cycle_in_window": true,
+      "health_alert_any_cycle_in_window": true
+    },
+    "engine_37": {
+      "true_rul_at_last_cycle": 21.0,
+      "pred_rul_at_last_cycle": 63.8186,
+      "health_at_last_cycle": 30.6329,
+      "rul_alert_at_last_cycle": true,
+      "health_alert_at_last_cycle": true,
+      "rul_alert_any_cycle_in_window": true,
+      "health_alert_any_cycle_in_window": true
+    }
+  },
+  "total_seconds": 21.48
+}

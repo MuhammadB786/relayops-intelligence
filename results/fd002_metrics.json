@@ -1,0 +1,58 @@
+{
+  "subset": "FD002",
+  "seed": 42,
+  "rul_cap": 125,
+  "dataset": {
+    "train_rows": 53759,
+    "train_engines": 260,
+    "test_rows": 33991,
+    "test_engines": 259
+  },
+  "fd001_reference_test": {
+    "rmse": 19.61,
+    "nasa_score": 966.678
+  },
+  "baseline": {
+    "validation": {
+      "train_engines": 208,
+      "val_engines": 52,
+      "protocol": "predictions at true RUL in [100, 75, 50, 25, 10]",
+      "points": 260,
+      "engines": 52,
+      "rmse": 17.703285836057056,
+      "nasa_score": 2152.4368152683164
+    },
+    "test_official_last_cycle": {
+      "train_engines": 260,
+      "dropped_constant_columns": [],
+      "n_features": 121,
+      "engines": 259,
+      "rmse": 27.59991384034533,
+      "nasa_score": 8658.059682119929
+    },
+    "seconds": 46.98
+  },
+  "condition_normalized": {
+    "validation": {
+      "train_engines": 208,
+      "val_engines": 52,
+      "protocol": "predictions at true RUL in [100, 75, 50, 25, 10]",
+      "points": 260,
+      "engines": 52,
+      "rmse": 16.156413177328158,
+      "nasa_score": 1655.0889638357196
+    },
+    "test_official_last_cycle": {
+      "train_engines": 260,
+      "dropped_constant_columns": [
+        "sensor_18"
+      ],
+      "n_features": 116,
+      "engines": 259,
+      "rmse": 27.71517202485555,
+      "nasa_score": 13665.769511377814
+    },
+    "seconds": 52.26
+  },
+  "total_seconds": 101.17
+}
