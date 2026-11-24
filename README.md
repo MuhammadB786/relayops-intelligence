@@ -1,31 +1,265 @@
 # RelayOps ML — Predictive Maintenance Intelligence
 
-A standalone Python ML service that will score equipment health and
+A standalone Python ML service that scores equipment health and
 remaining useful life (RUL) for [RelayOps](https://github.com/MuhammadB786/RelayOps)
-(a maintenance & reliability platform) and feed predictions back to it over
-an API. This repository is deliberately separate from the RelayOps web app:
-the model pipeline is a portfolio-grade, independently deployable artifact,
-and integration is API-only (Milestone 3).
+(a maintenance & reliability platform) and feeds predictions back to it
+over an API. This repository is deliberately separate from the RelayOps
+web app: the model pipeline is a portfolio-grade, independently
+deployable artifact, and integration is API-only.
 
-**Status: Milestone 4 complete** — M1 (data pipeline, baseline RUL model,
-honest published evaluation), M2 (anomaly detection, a composite health
-index, a costed alert-threshold decision, and a generalization run on the
-harder FD002 subset), M3: the FastAPI scoring service below, serving
-the trained M1+M2 components from a checksummed artifact bundle, and
-M4: a data-derived sensor simulator, a live scoring demo, and PSI drift
-monitoring with an evaluated retraining trigger. The RelayOps-side
-integration (predictions table, worker route, UI) is a separate change
-with its own checkpoint; the full case study (M5) follows.
+**Status: Milestones 1–4 complete.** M1 — data pipeline, baseline RUL
+model, evaluation against published baselines. M2 — anomaly detection,
+a composite health index, a costed alert-threshold decision, and a
+generalization run on the harder FD002 subset. M3 — a FastAPI scoring
+service serving the trained components from a checksummed artifact
+bundle. M4 — a data-derived sensor simulator, a live scoring demo, and
+PSI drift monitoring with an evaluated retraining trigger. This case
+study is M5; deployment is prepared (`render.yaml`, see *Deploying*)
+but not yet performed, and the RelayOps-side integration (predictions
+table, worker route, UI) is **not built yet** — it is a separate change
+gated on the RelayOps app's own Cloudflare deployment. Nothing below
+claims otherwise.
 
-## Problem
+## Case study
 
-Unplanned equipment downtime is one of the most expensive failure modes in
-asset-intensive operations (industry estimates put it on the order of
-$125k/hour median across heavy industries, ~$1T/year globally). Maintenance
-teams mostly still react: something breaks, then they scramble. The
-alternative — predicting remaining useful life from sensor history early
-enough to schedule the repair — is what this service builds, honestly
-evaluated against the public benchmark the field uses for exactly this.
+### The problem
+
+Unplanned equipment downtime is one of the most expensive failure modes
+in asset-intensive operations — industry estimates put it on the order
+of $125k/hour median across heavy industries, ~$1T/year globally.
+Maintenance teams mostly still react: something breaks, then they
+scramble. RelayOps already manages the reactive side (work orders,
+assets, sensor readings, preventive plans, audit trail); what it
+cannot do today is look ahead — which asset is degrading, how much
+life it has left, and when an intervention is worth its cost.
+
+This service is that foresight layer: predicting remaining useful life
+from sensor history early enough to schedule the repair. It is built
+and evaluated on NASA's C-MAPSS turbofan degradation benchmark, the
+public dataset the field uses for exactly this problem, because
+published baselines make honest comparison possible — every headline
+number below sits next to the published number it should be judged
+against. The economics drive the engineering throughout: an hour of
+unplanned downtime costs orders of magnitude more than an inspection,
+so the alerting decision in M2 is made under an explicit 50:1
+missed-failure:false-alarm cost model rather than by maximizing
+accuracy.
+
+### What this adds to RelayOps — and the integration contract
+
+For each asset, the service returns a predicted RUL (cycles), a 0–100
+health index, an anomaly percentile against healthy behaviour, and an
+alert level (`critical` / `watch` / `none`). The contract is HTTP-only:
+
+| Endpoint | Contract |
+|---|---|
+| `POST /score` | one asset's recent sensor window in → RUL, health, anomaly, alert level out |
+| `POST /score/batch` | many assets per call; one bad asset returns a per-item error, never sinks the batch |
+| `GET /healthz` | liveness + model version + artifact checksum; unauthenticated |
+
+Scoring endpoints require an `X-API-Key` header when
+`RELAYOPS_ML_API_KEY` is set (a shared-secret stub — demo scope, see
+Limitations). The boundary is strict in both directions: this
+repository never touches RelayOps code or data, and RelayOps will
+consume predictions only through this API, storing them in its own
+predictions table. The service side of the contract is implemented and
+tested (M3); the RelayOps side is pending, per the status note above.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    subgraph Data["Data"]
+        NASA["C-MAPSS FD001 / FD002<br/>data/ (gitignored)"]
+        SIM["Sensor simulator<br/>src/simulator.py"]
+    end
+    subgraph Pipeline["Offline pipeline"]
+        FEAT["Feature engineering<br/>src/data.py"]
+        RULM["RUL model - gradient boosting<br/>src/model.py"]
+        ANOM["Anomaly detector - IsolationForest<br/>src/anomaly.py"]
+        HEALTH["Health index + alert rules<br/>src/health.py, src/alerts.py"]
+        EVAL["Evaluation<br/>src/evaluate.py"]
+    end
+    subgraph Serving["Serving"]
+        BUNDLE["Artifact bundle + model card<br/>api/artifacts.py"]
+        API["FastAPI<br/>api/main.py, api/schemas.py"]
+    end
+    subgraph Ops["Ops loop"]
+        DRIFT["PSI drift monitor<br/>src/drift.py"]
+        TRIGGER["Retraining trigger<br/>>= 3 sensors PSI > 0.25<br/>in 2 consecutive windows"]
+    end
+    CONSUMER["RelayOps<br/>API consumer - integration pending"]
+    NASA --> FEAT
+    FEAT --> RULM
+    FEAT --> ANOM
+    RULM --> HEALTH
+    ANOM --> HEALTH
+    FEAT -.-> EVAL
+    RULM --> BUNDLE
+    ANOM --> BUNDLE
+    HEALTH --> BUNDLE
+    BUNDLE --> API
+    SIM --> API
+    API --> CONSUMER
+    API -.-> DRIFT
+    DRIFT --> TRIGGER
+    TRIGGER -.->|retrain| FEAT
+```
+
+| Component | File(s) | Role |
+|---|---|---|
+| Data + features | `src/data.py` | C-MAPSS loading, capped RUL labels, engine-level splits, trailing rolling features |
+| RUL model | `src/model.py` | HistGradientBoosting regressor + joblib persistence |
+| Evaluation | `src/evaluate.py` | RMSE, NASA asymmetric score, last-cycle protocol |
+| Anomaly detection | `src/anomaly.py` | IsolationForest on healthy life only; scores, percentiles, lead times |
+| Health index | `src/health.py` | Documented 0.6/0.4 composite of RUL and anomaly components |
+| Alert decision | `src/alerts.py` | Per-cycle precision/recall, costed threshold sweep |
+| Simulator | `src/simulator.py` | Synthetic assets with parameters measured from FD001 + recorded-engine replay |
+| Drift monitoring | `src/drift.py` | Per-sensor PSI vs reference, retraining-trigger rule |
+| API | `api/main.py`, `api/schemas.py` | `/healthz`, `/score`, `/score/batch`; strict validation, reject-never-repair |
+| Artifact bundle | `api/artifacts.py` | Checksummed save/load, fail-fast startup, alert-level mapping |
+| Entry points | `scripts/` | `fetch_data.py`, `train.py`, `run_m2.py`, `run_fd002.py`, `train_service.py`, `run_live_demo.py`, `run_drift_eval.py`, `smoke.py` |
+
+The ops loop closes the system: scored production windows feed the
+drift monitor, and when the trigger fires the answer is a retrain
+through the same pipeline — not a threshold tweak.
+
+### Results at a glance
+
+Every number is copied from `results/` (the appendix names the source
+of each); published values are the comparison tables cited in
+References.
+
+| Measure | This project | Published reference |
+|---|---|---|
+| RUL — FD001 test RMSE | **19.61** | DCNN 12.61 · LSTM 16.10 · CNN 18.45 · SVR 20.96 |
+| RUL — FD001 test NASA score | **966.678** | DCNN 274 · LSTM 338 · CNN 1287 |
+| RUL — FD002 test RMSE / NASA | **27.60 / 8658** | DCNN 22.36 / 10,412 · LSTM 24.49 · CNN 30.29 (RMSE) |
+| Alert rule (health ≤ 50) — test precision / recall | **0.165 / 0.994** | best RUL-only rule (≤ 90): 0.114 / 0.985 |
+| Anomaly detection — validation median lead time | **140.5 cycles** at 16.0% healthy-cycle false-alarm rate → **64 cycles** at 4.8% (threshold sweep; detection rate 1.00 throughout) | — |
+| Live demo — confirmed-critical lead time | **92 cycles** (synthetic asset) · **28 cycles** (FD001 engine 41 replay) | — |
+| Drift trigger — detection boundary | fires at **1.0 reference-σ** sustained sensor bias; silent on the unshifted control (health-index PSI 0.0206) and at 0.5σ | — |
+
+The honest summary: the RUL baseline beats the classical SVR and, on
+the safety-weighted NASA score, the published CNN — and loses clearly
+to every sequence model. The system's value is not the regressor; it
+is the composite alerting (which catches the regressor's worst
+mistakes), the evaluated operating point, and the monitoring around
+it.
+
+### Key decisions
+
+- **RUL labels capped at 125 cycles.** Above the cap an engine is
+  effectively healthy and its exact RUL is label noise; the cap
+  focuses learning on the degradation regime and follows the published
+  convention (R_early = 125), keeping scores comparable. Accepted
+  cost: long-RUL predictions are structurally biased low (appendix,
+  M1 failure mode 1).
+- **Splits by engine, features trailing-only.** No cycle of a
+  validation engine is ever trained on, and a row's features depend
+  only on its own past — enforced by a test that mutates future rows
+  and asserts earlier features do not change. Random row splits would
+  leak and flatter every metric in this document.
+- **Alert when health ≤ 50, chosen on validation under a 50:1 cost
+  model.** Frozen before test evaluation; on test it returns precision
+  0.165 / recall 0.994 at the lowest cost of any candidate on both
+  sets, and the ranking survives 10:1 and 100:1 sensitivity checks.
+  The accepted price is stated with it: about five false-alarm cycles
+  per true alert cycle, and 52% of test engines see at least one alert
+  while still healthy.
+- **Retraining trigger: ≥ 3 sensors with PSI > 0.25 in each of 2
+  consecutive windows.** Measured boundary: a sustained 1.0
+  reference-σ bias on three sensors fires it (shifted-sensor PSI
+  1.18–1.60); 0.5σ does not — it is plainly visible in one window
+  (PSI 0.37–0.40) and nearly invisible in the next (0.06–0.09), which
+  is exactly the flakiness the persistence rule exists to reject. The
+  unshifted control does not fire.
+- **The first 10 cycles of any asset are "warming up", never scored.**
+  Rolling features over partially filled windows land in a
+  feature-space corner that reads as maximally anomalous (mean cycle-1
+  anomaly score 0.5897 vs 0.451 settled; 100% of engines above the
+  healthy 97.5th percentile at cycle 1). The API enforces it as a
+  readable 422, not a silent bad score.
+
+### What failed
+
+- **The FD002 normalization remedy did not transfer.**
+  Operating-condition normalization improved FD002 validation (RMSE
+  17.70 → 16.16, score 2152 → 1655) and then failed the official test
+  (27.60 → 27.72, score 8658 → 13,666): it reduced the count of late
+  predictions but made the worst ones worse, and the NASA score is
+  decided by that tail. Verdict recorded in M2: not validated.
+- **M1's first validation protocol was meaningless — caught and
+  replaced.** Scoring run-to-failure engines at their last cycle
+  grades predictions where true RUL is 0 by construction. Validation
+  now scores at fixed true-RUL horizons (100/75/50/25/10), which is
+  why the validation numbers (RMSE 18.69, NASA 1051.427) sit close to
+  test instead of flattering the model.
+- **M2's detector appeared to fire at birth — an artifact, caught by
+  evaluation.** Phantom ~200-cycle median lead times at every
+  threshold traced to the partially-filled-window effect above; the
+  warm-up exclusion is the fix, and the underlying signal (scores
+  rising monotonically as true RUL falls) was re-verified after it.
+- **Pooled drift monitoring is composition-sensitive — measured, not
+  assumed.** In the unshifted M4 control, sensor_14 reads PSI 1.7235
+  with no drift at all: 84.4% of its pooled variance is between-engine,
+  so a small window's marginal is mostly a lottery of which engines
+  are in it. An earlier design using fraction-of-life windows
+  false-fired the trigger on the same control. Cycle-matched windows
+  plus the ≥3-sensor × 2-window persistence rule are the mitigations;
+  per-asset PSI is the named fix, not yet built.
+
+### Limitations and future work
+
+- **Serving validity is FD001-only.** One operating condition, one
+  fault mode. The FD002 result is precisely why `/score` documents
+  FD001 validity: a multi-condition fleet would be scored by a model
+  never validated there. Per-condition models are the named FD002
+  next experiment.
+- **Alert metrics are per-cycle, not per-episode.** A persistent alert
+  is one inspection episode to an operator but many cycles to the
+  metric; episode-level precision/recall remains future work, and the
+  operating point inherits the 50:1 cost assumption (sensitivity
+  reported; the true ratio is a business decision).
+- **Drift monitoring is pooled, not per-asset** — with the composition
+  caveat measured in M4 — and PSI is univariate, so a
+  correlation-only drift with unchanged marginals is invisible to it.
+  Its measured sensitivity floor is ≈ 1 reference-σ of sustained bias.
+- **The accuracy gap is sequence models.** LSTM (16.10 / 338) and DCNN
+  (12.61 / 274) beat the gradient-boosting baseline by a wide margin;
+  a sequence model behind the same API contract is the clearest
+  accuracy upgrade available. An uncapped / two-stage RUL variant is
+  the cheaper experiment against failure mode 1.
+- **RelayOps integration is pending** (predictions table, worker
+  route, health surfacing in the UI), gated on the RelayOps app's
+  Cloudflare deployment. Auth is a shared-secret stub; the Dockerfile
+  is written to spec but not build-verified (no Docker daemon on the
+  build machine).
+
+### Reproduce everything
+
+All scripts are deterministic (seed 42; the M4 simulator/demo uses
+seed 7). Runtimes are the recorded totals from the results files or
+the milestone sections, on a laptop CPU.
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python scripts/fetch_data.py        # C-MAPSS -> data/ (12.4 MB download, seconds)
+.venv/bin/python scripts/train.py             # M1 -> results/metrics.json            (~19 s)
+.venv/bin/python scripts/run_m2.py            # M2 -> results/m2_metrics.json + CSVs  (~21 s)
+.venv/bin/python scripts/run_fd002.py         # FD002 -> results/fd002_metrics.json   (~101 s)
+.venv/bin/python scripts/train_service.py     # M3 bundle -> models/                  (~13 s)
+.venv/bin/python scripts/run_live_demo.py     # M4 demo -> results/m4_metrics.json    (~33 s)
+.venv/bin/python scripts/run_drift_eval.py    # M4 drift -> m4_metrics.json section   (~3.4 s)
+.venv/bin/python -m pytest tests/ -q          # 68 tests, synthetic data only, no downloads
+```
+
+---
+
+*Appendix — the detailed milestone record, written as the work was
+done. The sections below (data, M1 evaluation detail, M2, M3, M4,
+limitations, run book, layout, references) are the evidence behind
+every number above; both draw on the same `results/` files.*
 
 ## Data
 
@@ -592,12 +826,40 @@ Two findings worth more than the headline:
   API entrypoint documented in its header. Its default command runs the
   test suite plus a synthetic-data smoke train, which do pass locally.
 
+## Deploying
+
+Deployment is prepared but not yet performed. `render.yaml` at the
+repo root is a Render Blueprint for a free-plan Python web service:
+
+1. In Render: **New → Blueprint**, connect this repository — Render
+   reads `render.yaml` and proposes the `relayops-ml` service.
+2. The build runs `pip install -r requirements.txt`, then
+   `python scripts/fetch_data.py` (downloads the C-MAPSS files into
+   `data/` — `train_service.py` assumes they exist and does not
+   download), then `python scripts/train_service.py`, which trains
+   the artifact bundle into `models/` inside the build slug. The
+   service fails fast at startup if the bundle is missing or stale,
+   so a broken build cannot silently serve.
+3. The service starts as `uvicorn api.main:app` on `$PORT`; Render's
+   health check probes `/healthz`, which is unauthenticated by
+   design.
+
+Free-tier caveats, stated plainly: the service spins down after
+~15 minutes idle and the first request afterwards cold-starts in
+roughly 30–60 s (subsequent requests are fast); the plan provides
+512 MB of memory, which fits this bundle but leaves little headroom.
+Set `RELAYOPS_ML_API_KEY` in the Render dashboard (the Blueprint
+marks it `sync: false`, so no secret is committed) to require the
+`X-API-Key` header on the scoring endpoints; leave it unset for an
+open demo. The Docker path (`Dockerfile`) remains available but, as
+noted in Limitations, is not build-verified.
+
 ## How to run
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-# place train_FD001.txt / test_FD001.txt / RUL_FD001.txt in data/
-# (NASA C-MAPSS distribution; see "Data" above; FD002 files likewise)
+.venv/bin/python scripts/fetch_data.py   # C-MAPSS -> data/ (or place the
+                                         # files manually; see "Data" above)
 .venv/bin/python -m pytest tests/ -q     # 68 tests
 .venv/bin/python scripts/train.py        # M1: writes results/ + models/
 .venv/bin/python scripts/run_m2.py       # M2: anomaly, health, alerts
@@ -625,6 +887,7 @@ src/health.py     composite 0-100 health index (documented formula)
 src/alerts.py     alert confusion/precision/recall, costed threshold sweep
 src/simulator.py  M4 synthetic asset generator (data-derived params) + replay
 src/drift.py      M4 PSI drift monitoring + retraining-trigger rule
+scripts/fetch_data.py  C-MAPSS download -> data/ (stdlib only; zip-in-zip)
 scripts/train.py  M1 end-to-end train + evaluate -> results/metrics.json
 scripts/run_m2.py M2: anomaly + health + alert decision -> m2_metrics.json,
                   alert_thresholds.csv, anomaly_lead_times.csv
@@ -649,6 +912,8 @@ results/          metrics.json (M1), m2_metrics.json, fd002_metrics.json,
                   alert_thresholds.csv, anomaly_lead_times.csv,
                   test_predictions.csv, feature_columns.json,
                   m4_metrics.json, live_demo_log.csv, live_demo_health.png
+render.yaml       Render Blueprint (M5): build = install + fetch + train,
+                  serve uvicorn on $PORT; see "Deploying"
 ```
 
 ## References
