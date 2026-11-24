@@ -1,0 +1,9 @@
+# Dataset downloads (NASA C-MAPSS, ~10 MB of text) — fetch per README.
+data/
+# Trained model artifacts — regenerate with scripts/train.py.
+models/
+# Python / tooling
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/

@@ -1,0 +1,43 @@
+{
+  "subset": "FD001",
+  "seed": 42,
+  "rul_cap": 125,
+  "windows": [
+    5,
+    10
+  ],
+  "dropped_constant_columns": [
+    "setting_3",
+    "sensor_1",
+    "sensor_5",
+    "sensor_10",
+    "sensor_16",
+    "sensor_18",
+    "sensor_19"
+  ],
+  "n_features": 86,
+  "dataset": {
+    "train_rows": 20631,
+    "train_engines": 100,
+    "test_rows": 13096,
+    "test_engines": 100
+  },
+  "validation_80_20_by_engine": {
+    "train_engines": 80,
+    "val_engines": 20,
+    "train_seconds": 8.0,
+    "protocol": "predictions at true RUL in [100, 75, 50, 25, 10]",
+    "points": 100,
+    "engines": 20,
+    "rmse": 18.69,
+    "nasa_score": 1051.427
+  },
+  "test_official_last_cycle": {
+    "train_engines": 100,
+    "train_seconds": 8.5,
+    "engines": 100,
+    "rmse": 19.61,
+    "nasa_score": 966.678
+  },
+  "total_seconds": 19.33
+}
